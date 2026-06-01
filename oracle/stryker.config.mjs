@@ -6,17 +6,13 @@ export default {
     '!src/**/*.test.ts',
     '!src/**/*.spec.ts',
     '!src/types/**/*.ts',
-    '!src/index.ts',
-    '!src/vercel.ts',
   ],
   
-  testRunner: 'jest',
+  testRunner: 'vitest',
   coverageAnalysis: 'perTest',
   
-  jest: {
-    projectType: 'custom',
-    configFile: 'jest.mutation.config.js',
-    enableFindRelatedTests: true,
+  vitest: {
+    config: 'vitest.config.ts',
   },
   
   // Comprehensive reporting for analysis
@@ -40,9 +36,9 @@ export default {
   // dashboardReporter: {
   //   baseUrl: 'https://dashboard.stryker-mutator.io',
   //   reportType: 'full',
-  //   projectName: 'stellarlend-api',
+  //   projectName: 'stellarlend-oracle',
   //   version: process.env.GITHUB_SHA || 'local',
-  //   module: 'api',
+  //   module: 'oracle',
   // },
   
   tempDirName: '.stryker-tmp',
@@ -66,8 +62,6 @@ export default {
     'src/types/**/*.ts',
     // Ignore configuration files
     'src/config/**/*.ts',
-    // Ignore middleware that may have side effects
-    'src/middleware/**/*.ts',
   ],
   
   // Incremental mutation testing configuration
@@ -76,7 +70,7 @@ export default {
   
   // Time budget for mutation testing
   timeBudget: {
-    minutes: 30,
+    minutes: 15,
   },
   
   // Handle equivalent mutants
@@ -99,7 +93,7 @@ export default {
   
   // Plugin configuration
   plugins: [
-    '@stryker-mutator/jest-runner',
+    '@stryker-mutator/vitest-runner',
     '@stryker-mutator/typescript-checker',
   ],
   
