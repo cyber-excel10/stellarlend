@@ -9,9 +9,14 @@ members = [
   "contracts/delegation-registry",
   "contracts/hello-world",
   "contracts/lending",
+  "contracts/lending-core",
+  "contracts/lending-types",
+  "contracts/lending-interest",
+  "contracts/lending-risk",
   "contracts/stablecoin",
   "contracts/institutional-wallet",
   "contracts/migration-hub",
+  "contracts/test-utils",
 ]
 exclude = ["fuzz"]
 
