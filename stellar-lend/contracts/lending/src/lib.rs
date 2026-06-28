@@ -58,6 +58,17 @@ mod upgrade;
 pub mod interest_rate;
 pub mod risk_monitor;
 
+// Performance optimization suite (issues #631–#634)
+pub mod interest;
+pub mod lazy;
+pub mod liquidation;
+pub mod storage;
+
+use interest::InterestCacheError;
+use lazy::{LazyError, LazyField};
+use liquidation::{LiquidationError, LiquidationPlan, PositionSnapshot};
+use storage::{PackError, PoolConfig};
+
 use insurance::{
     cancel_claim as insurance_cancel_claim, collect_premium as insurance_collect_premium,
     evaluate_claim as insurance_evaluate_claim, fund_pool as insurance_fund_pool,
@@ -607,5 +618,92 @@ impl LendingContract {
     /// Sweep dust amounts from user's withdraw position
     pub fn sweep_withdraw_dust(env: Env, user: Address, asset: Address) -> Result<i128, WithdrawError> {
         withdraw::sweep_dust(&env, user, asset)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Performance optimization suite (issues #631–#634)
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// Read-optimised cumulative interest index (#631).
+    ///
+    /// Computes the index at the current ledger **without** a storage write, so
+    /// `view` callers pay no write gas.
+    pub fn interest_index(env: Env) -> i128 {
+        let _guard = ReentrancyGuard::new_read_only(&env);
+        interest::current_index(&env)
+    }
+
+    /// Advance and persist the cached interest index incrementally (#631).
+    ///
+    /// No-ops (no storage write) when already accrued in the current ledger, so
+    /// multiple operations in the same block are charged interest once (batch).
+    pub fn accrue_interest(env: Env) -> Result<i128, InterestCacheError> {
+        let _guard = ReentrancyGuard::new_with_key(&env, ReentrancyKey::GlobalLock, false)
+            .map_err(|_| InterestCacheError::Overflow)?;
+        Ok(interest::accrue(&env)?.cumulative_index)
+    }
+
+    /// Invalidate the interest cache after a rate/parameter/oracle change (#631).
+    pub fn invalidate_interest_cache(env: Env, admin: Address) -> Result<(), InterestCacheError> {
+        let _guard = ReentrancyGuard::new_with_key(&env, ReentrancyKey::GlobalLock, false)
+            .map_err(|_| InterestCacheError::Overflow)?;
+        if get_borrow_admin(&env).as_ref() == Some(&admin) {
+            admin.require_auth();
+        }
+        interest::invalidate(&env).map(|_| ())
+    }
+
+    /// Build a validated liquidation plan with cheapest-first early exits (#632).
+    ///
+    /// Pure validation entry point: runs every check (health factor,
+    /// close-factor clamp, oracle freshness, gas-vs-profit) before any state
+    /// mutation, so a doomed liquidation reverts having only read state.
+    pub fn plan_liquidation(
+        env: Env,
+        snapshot: PositionSnapshot,
+        requested_repay_value: i128,
+        max_oracle_age_secs: u64,
+        est_gas_cost: i128,
+    ) -> Result<LiquidationPlan, LiquidationError> {
+        let _guard = ReentrancyGuard::new_read_only(&env);
+        liquidation::plan_liquidation(
+            &snapshot,
+            requested_repay_value,
+            env.ledger().timestamp(),
+            max_oracle_age_secs,
+            est_gas_cost,
+        )
+    }
+
+    /// Read the packed pool configuration, if migrated (#633).
+    pub fn get_packed_config(env: Env) -> Option<PoolConfig> {
+        storage::load(&env)
+    }
+
+    /// Migrate loose configuration values into the packed two-word layout (#633).
+    pub fn migrate_packed_config(env: Env, admin: Address) -> Result<PoolConfig, PackError> {
+        let _guard = ReentrancyGuard::new_with_key(&env, ReentrancyKey::GlobalLock, false)
+            .map_err(|_| PackError::BpsFieldOverflow)?;
+        if get_borrow_admin(&env).as_ref() == Some(&admin) {
+            admin.require_auth();
+        }
+        storage::migrate_from_legacy(&env)
+    }
+
+    /// Read a lazily-initialised pool-state field, returning its default if the
+    /// slot has never been written (no storage allocation) (#634).
+    pub fn get_lazy_field(env: Env, field: LazyField) -> i128 {
+        let _guard = ReentrancyGuard::new_read_only(&env);
+        lazy::get(&env, field)
+    }
+
+    /// Eagerly initialise all deferrable fields for a pre-existing pool (#634).
+    pub fn migrate_lazy_fields(env: Env, admin: Address) -> Result<u32, LazyError> {
+        let _guard = ReentrancyGuard::new_with_key(&env, ReentrancyKey::GlobalLock, false)
+            .map_err(|_| LazyError::InvalidValue)?;
+        if get_borrow_admin(&env).as_ref() == Some(&admin) {
+            admin.require_auth();
+        }
+        Ok(lazy::migrate_initialize_all(&env))
     }
 }
